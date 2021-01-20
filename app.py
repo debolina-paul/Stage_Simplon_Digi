@@ -4,6 +4,9 @@ import json
 import base64
 import pymongo
 from bson import json_util
+import pandas as pd, matplotlib.pyplot as plt, matplotlib.dates as mdates
+import plotly, json
+import plotly.graph_objects as go
 
 dbclient = pymongo.MongoClient("mongodb://localhost:27017")
 db = dbclient["amica_database"]
@@ -11,17 +14,19 @@ collection_auth = db["id_clients"]
 collection_customer = db["customer"]	
 collection_activity = db["activity_info"]
 collection_total = db["total"]
+collection_datatosync = db["data to sync"]
 
 from flask import Flask
 from flask import request
 from flask import jsonify
 from flask import render_template
+from flask import send_file
 
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-	return render_template('test.html')
+	return render_template('Home.html')
 	
 
 @app.route("/register")
@@ -97,13 +102,83 @@ def postdata():
 @app.route("/total")
 def total():
 	print("data processing ongoing")
-	data = collection_total.find_one({},{'_id': False})
+	#data = collection_total.find_one({},{'_id': False})
+	#print(json.loads(json_util.dumps(data)))
+	#return json.loads(json_util.dumps(data))
+	
+	data = collection_datatosync.find_one({},{'_id': False})
 	print(json.loads(json_util.dumps(data)))
 	return json.loads(json_util.dumps(data))
+	
 
 @app.route("/dashboard/")
 def dashboard():
 	return render_template("d2.html")
-	
+
+@app.route("/weekly")
+def weekly():
+	#diagram sleep watch1
+	sleepdf=pd.read_csv("/home/ubuntu/Desktop/amica.v2/data real life/data/withings data/watch1/sleep.csv")
+	sleepdf['from']=pd.to_datetime(sleepdf['from'])
+	sleepdf['to']=pd.to_datetime(sleepdf['to'])
+	sleepdict={}
+	for i,row in sleepdf.iterrows():
+		sleepvalulist=[]
+		date=str(row.loc['to'].day)
+		lightsleep=row.loc['light']
+		deepsleep=row.loc['deep']
+		awakesleep=row.loc['awake']
+		sleepvalulist.append(lightsleep)
+		sleepvalulist.append(deepsleep)
+		sleepvalulist.append(awakesleep)
+		sleepdict[date]=sleepvalulist
+	index=pd.date_range('15-12-2020','31-12-2020')
+	sleepdfcomplete=pd.DataFrame()
+	sleepdfcomplete['Date']=index
+	for i,row in sleepdfcomplete.iterrows():
+		if(str(row.loc['Date'].day) in sleepdict.keys()):
+			sleepdfcomplete.loc[i,'light'] = sleepdict.get(str(row.loc['Date'].day))[0]
+			sleepdfcomplete.loc[i,'deep'] = sleepdict.get(str(row.loc['Date'].day))[1]
+			sleepdfcomplete.loc[i,'awake'] = sleepdict.get(str(row.loc['Date'].day))[2]
+        
+	sleepdfcomplete.index=sleepdfcomplete['Date']
+	sleepdfcomplete.drop('Date', axis=1, inplace=True)
+	sleepdfcomplete.fillna(0, inplace=True)
+	for i,row in sleepdfcomplete.iterrows():
+		if(row.loc['light']==0 and row.loc['deep']==0 and row.loc['awake']==0):
+			sleepdfcomplete.loc[i,'Data Present'] = 'No'
+		else:
+			sleepdfcomplete.loc[i,'Data Present'] = 'Yes'
+	print(sleepdfcomplete)
+    
+	trace_light=go.Bar(x=sleepdfcomplete.index, y=sleepdfcomplete.light, name='light sleep', marker=dict(color='#e73f22'))
+	trace_deep=go.Bar(x=sleepdfcomplete.index, y=sleepdfcomplete.deep, name='deep sleep', marker=dict(color='#f6cb16'))
+	trace_awake=go.Bar(x=sleepdfcomplete.index, y=sleepdfcomplete.awake, name='awake', marker=dict(color='#4CA66B'))
+	layoutsleep=go.Layout(title="Sleep data", xaxis=dict(title="Date"), yaxis=dict(title="sleep amount"),)
+
+
+	datasleep = [trace_light, trace_deep, trace_awake]
+	figsleep=go.Figure(data=datasleep, layout=layoutsleep)
+	graphJSONsleep = json.dumps(figsleep, cls=plotly.utils.PlotlyJSONEncoder)
+
+	#sleep watch 2
+
+
+
+	data={'plot':graphJSONsleep,
+			#'plot1':graphJSONsleep
+			}
+
+	return render_template("statistics_w1.html", **data)
+
+@app.route("/img")
+def img():
+	image_number = request.args.get('weekly')
+	if image_number == "1":
+		filename="./img/dp_weekly1.png"
+	else:
+		filename="./img/dp_weekly2.png"
+	return send_file(filename, mimetype="image/png")
+
 if __name__ == '__main__':
 	app.run(debug=True)
